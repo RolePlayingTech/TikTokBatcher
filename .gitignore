@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment — NEVER commit secrets or local config
+.env
+.env.local
+
+# Runtime state — persistent Chromium profile (cookies/session), screenshots,
+# uploaded log. Must stay local; contains session cookies.
+state/
+
+# Input videos and captions — user-supplied, potentially huge, not for the repo
+filmy/*.mp4
+filmy/*.mov
+filmy/*.webm
+filmy/*.m4v
+filmy/*.mkv
+filmy/*.txt
+videos/
+
+# Generated posting plan
+schedule/plan.yaml
+
+# Logs and scratch files
+*.log
+1.png
+*.bak
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
