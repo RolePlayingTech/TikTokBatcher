@@ -16,12 +16,8 @@ export interface LaunchOpts {
  *   - with a pl-PL locale and the configured timezone so browser env matches the user
  */
 export async function launchContext(opts: LaunchOpts = {}): Promise<BrowserContext> {
-  if (!fs.existsSync(stateFiles.userDataDir)) {
-    fs.mkdirSync(stateFiles.userDataDir, { recursive: true });
-  }
-  if (!fs.existsSync(stateFiles.screenshotsDir)) {
-    fs.mkdirSync(stateFiles.screenshotsDir, { recursive: true });
-  }
+  fs.mkdirSync(stateFiles.userDataDir, { recursive: true });
+  fs.mkdirSync(stateFiles.screenshotsDir, { recursive: true });
 
   const context = await chromium.launchPersistentContext(stateFiles.userDataDir, {
     headless: opts.headless ?? false,

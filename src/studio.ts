@@ -135,39 +135,42 @@ export async function uploadOne(
  *
  * Throws after 120s if none of the above triggered.
  */
+const SUCCESS_TOAST_PATTERNS = [
+  /zaplanowan/i,
+  /opublikowan/i,
+  /scheduled/i,
+  /posted/i,
+  /success/i,
+];
+
 async function waitForUploadSuccess(page: Page): Promise<void> {
   const start = Date.now();
   const timeout = 120_000;
   const startUrl = page.url();
 
+  const scheduleContainer = page.locator('div[data-e2e="schedule_container"]').first();
+  const captionContainer = page.locator('div[data-e2e="caption_container"]').first();
+  const toasts = SUCCESS_TOAST_PATTERNS.map((p) => ({
+    pattern: p,
+    locator: page.locator(`text=${p.source}`).first(),
+  }));
+
   while (Date.now() - start < timeout) {
-    // A) URL change
     const currentUrl = page.url();
     if (currentUrl !== startUrl && !currentUrl.includes('/upload')) {
       log.ok(`scheduled successfully (URL changed to ${currentUrl})`);
       return;
     }
 
-    // B/C) Form vanished — upload flow completed on the page itself
-    const scheduleVisible = await page
-      .locator('div[data-e2e="schedule_container"]')
-      .first()
-      .isVisible()
-      .catch(() => true);
-    const captionVisible = await page
-      .locator('div[data-e2e="caption_container"]')
-      .first()
-      .isVisible()
-      .catch(() => true);
+    const scheduleVisible = await scheduleContainer.isVisible().catch(() => true);
+    const captionVisible = await captionContainer.isVisible().catch(() => true);
     if (!scheduleVisible && !captionVisible) {
       log.ok('scheduled successfully (form cleared)');
       return;
     }
 
-    // D) Success toast text
-    for (const pattern of [/zaplanowan/i, /opublikowan/i, /scheduled/i, /posted/i, /success/i]) {
-      const t = page.locator(`text=${pattern.source}`).first();
-      if (await t.isVisible().catch(() => false)) {
+    for (const { pattern, locator } of toasts) {
+      if (await locator.isVisible().catch(() => false)) {
         log.ok(`scheduled successfully (toast matched ${pattern})`);
         return;
       }
@@ -183,33 +186,45 @@ async function waitForUploadSuccess(page: Page): Promise<void> {
   );
 }
 
+async function tryClickButton(
+  page: Page,
+  text: string,
+  visibilityTimeout: number
+): Promise<boolean> {
+  try {
+    const btn = page.getByRole('button', { name: text, exact: true }).first();
+    if (await btn.isVisible({ timeout: visibilityTimeout })) {
+      await btn.click({ timeout: 3_000 });
+      return true;
+    }
+  } catch {
+    /* not visible — caller decides what to do */
+  }
+  return false;
+}
+
+const CONFIRM_PUBLISH_TEXTS = [
+  'Opublikuj teraz',
+  'Post now',
+  'Publish now',
+  'Kontynuuj',
+  'Continue',
+] as const;
+
 /**
  * If Studio shows the "Kontynuować publikowanie?" confirmation modal after
- * clicking the post button, click its primary "Opublikuj teraz" button to
- * continue. If no modal appears within ~4s, assume the post went straight
- * through (moderation check already finished) and return.
+ * clicking the post button, click its primary "Opublikuj teraz" button.
+ * "Opublikuj teraz" here means "continue with the selected schedule despite
+ * moderation still running" — NOT "post immediately without a schedule".
  */
 async function confirmPublishModal(page: Page): Promise<void> {
-  const confirmTexts = [
-    'Opublikuj teraz',  // PL primary
-    'Post now',          // EN primary
-    'Publish now',       // EN alt
-    'Kontynuuj',         // PL alt
-    'Continue',          // EN alt
-  ];
   const start = Date.now();
   while (Date.now() - start < 5_000) {
-    for (const text of confirmTexts) {
-      try {
-        const btn = page.getByRole('button', { name: text, exact: true }).first();
-        if (await btn.isVisible({ timeout: 200 })) {
-          log.dim(`publish confirmation modal: clicking "${text}"`);
-          await btn.click({ timeout: 3_000 });
-          await sleep(600);
-          return;
-        }
-      } catch {
-        /* not visible — try next */
+    for (const text of CONFIRM_PUBLISH_TEXTS) {
+      if (await tryClickButton(page, text, 200)) {
+        log.dim(`publish confirmation modal: clicked "${text}"`);
+        await sleep(600);
+        return;
       }
     }
     await sleep(200);
@@ -217,27 +232,15 @@ async function confirmPublishModal(page: Page): Promise<void> {
   log.dim('no publish confirmation modal — proceeding');
 }
 
-/**
- * Dismiss any "What's new" / onboarding modal Studio may have injected on
- * top of the upload form. Non-fatal: if no modal is present, returns fast.
- *
- * Observed modal: "Dodano nowe funkcje do edycji" with red "Rozumiem" button.
- */
+const DISMISS_MODAL_TEXTS = ['Rozumiem', 'Got it', 'Zamknij', 'Close', 'OK'] as const;
+
 async function dismissModals(page: Page): Promise<void> {
-  const texts = ['Rozumiem', 'Got it', 'Zamknij', 'Close', 'OK'];
-  for (const text of texts) {
-    try {
-      const btn = page.getByRole('button', { name: text, exact: true }).first();
-      if (await btn.isVisible({ timeout: 300 })) {
-        log.dim(`dismissing modal: "${text}"`);
-        await btn.click({ timeout: 2_000 });
-        await sleep(500);
-      }
-    } catch {
-      /* no such button visible — continue */
+  for (const text of DISMISS_MODAL_TEXTS) {
+    if (await tryClickButton(page, text, 300)) {
+      log.dim(`dismissed modal: "${text}"`);
+      await sleep(500);
     }
   }
-  // Some modals use an Escape-to-close pattern
   await page.keyboard.press('Escape').catch(() => {});
 }
 
@@ -546,16 +549,14 @@ async function verifySchedule(
   expectedDate: string,
   expectedTime: string
 ): Promise<void> {
-  const dateVal = await page
-    .locator(selectors.dateField[0])
-    .first()
-    .inputValue()
-    .catch(() => '');
-  const timeVal = await page
-    .locator(selectors.timeField[0])
-    .first()
-    .inputValue()
-    .catch(() => '');
+  const dateInput = await findFirst(page, selectors.dateField, { timeout: 3_000 }).catch(
+    () => null
+  );
+  const timeInput = await findFirst(page, selectors.timeField, { timeout: 3_000 }).catch(
+    () => null
+  );
+  const dateVal = (await dateInput?.inputValue().catch(() => '')) ?? '';
+  const timeVal = (await timeInput?.inputValue().catch(() => '')) ?? '';
   if (dateVal !== expectedDate || timeVal !== expectedTime) {
     await screenshot(page, 'verify-fail');
     throw new Error(

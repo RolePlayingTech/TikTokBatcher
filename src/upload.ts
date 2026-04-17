@@ -17,12 +17,15 @@ import {
 import type { Plan, PlanEntry, UploadedRecord } from './types.js';
 
 function loadPlan(): Plan {
-  if (!fs.existsSync(config.planFile)) {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(config.planFile, 'utf8');
+  } catch {
     log.err(`Plan file not found: ${config.planFile}`);
     log.info('Run: npm run plan');
     process.exit(1);
   }
-  const parsed = yaml.load(fs.readFileSync(config.planFile, 'utf8')) as Plan | null;
+  const parsed = yaml.load(raw) as Plan | null;
   if (!parsed || !Array.isArray(parsed.entries)) {
     log.err('Plan file is malformed.');
     process.exit(1);
@@ -64,8 +67,6 @@ async function buildPending(
       continue;
     }
 
-    // Hash-based duplicate check. Use the hash from the plan if present,
-    // otherwise recompute from the file on disk.
     const fileHash = entry.fileHash || (await hashFile(absPath));
     if (alreadyUploaded.has(fileHash)) {
       log.warn(`skip ${entry.videoFile}: already uploaded (hash match)`);

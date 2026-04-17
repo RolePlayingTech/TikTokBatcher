@@ -24,21 +24,21 @@ interface VideoInfo {
 }
 
 function listVideoFilenames(dir: string): string[] {
-  if (!fs.existsSync(dir)) {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
     log.err(`Videos directory not found: ${dir}`);
     log.info(`Create it and drop your video files in, then re-run.`);
     process.exit(1);
   }
-  return fs
-    .readdirSync(dir)
+  return entries
     .filter((f) => VIDEO_EXT.has(path.extname(f).toLowerCase()))
     .sort((a, b) => a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' }));
 }
 
-/** Read the sidecar .txt file for a video, or '' if absent. */
 function readSidecarCaption(videoAbsPath: string): string {
   const txtPath = videoAbsPath.replace(/\.[^.]+$/, '.txt');
-  if (!fs.existsSync(txtPath)) return '';
   try {
     return fs.readFileSync(txtPath, 'utf8').trim();
   } catch {
@@ -47,18 +47,16 @@ function readSidecarCaption(videoAbsPath: string): string {
 }
 
 async function gatherVideoInfo(filenames: string[]): Promise<VideoInfo[]> {
-  const infos: VideoInfo[] = [];
-  for (const name of filenames) {
-    const absPath = path.join(config.videosDir, name);
-    const relPath = path
-      .relative(config.root, absPath)
-      .replace(/\\/g, '/');
-    log.dim(`hashing ${name}...`);
-    const fileHash = await hashFile(absPath);
-    const caption = readSidecarCaption(absPath);
-    infos.push({ filename: name, absPath, relPath, caption, fileHash });
-  }
-  return infos;
+  log.dim(`hashing ${filenames.length} file(s) in parallel...`);
+  return Promise.all(
+    filenames.map(async (name) => {
+      const absPath = path.join(config.videosDir, name);
+      const relPath = path.relative(config.root, absPath).replace(/\\/g, '/');
+      const fileHash = await hashFile(absPath);
+      const caption = readSidecarCaption(absPath);
+      return { filename: name, absPath, relPath, caption, fileHash };
+    })
+  );
 }
 
 /**
@@ -111,8 +109,12 @@ function applyThemeOrdering(videos: VideoInfo[]): VideoInfo[] {
 }
 
 function loadExistingPlan(): Plan | null {
-  if (!fs.existsSync(config.planFile)) return null;
-  const raw = fs.readFileSync(config.planFile, 'utf8');
+  let raw: string;
+  try {
+    raw = fs.readFileSync(config.planFile, 'utf8');
+  } catch {
+    return null;
+  }
   const parsed = yaml.load(raw) as Plan | null;
   if (!parsed || !Array.isArray(parsed.entries)) return null;
   return parsed;
